@@ -3,6 +3,7 @@ package network
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"sync"
 	"time"
@@ -573,15 +574,22 @@ func (m *Manager) forwardFromDevice(nodeID, portID string, wire *pdu.WireFrame) 
 	m.TransmitFrame(wire)
 }
 
-// StartPing initiates an ICMP echo from a host to a destination IP.
+// StartPing initiates an ICMP echo from a host or router to a destination IP.
 func (m *Manager) StartPing(sourceID, destIP, requestID string) error {
-	host, ok := m.GetHost(sourceID)
-	if !ok {
-		return fmt.Errorf("host %s not found", sourceID)
+	// Try host first.
+	if host, ok := m.GetHost(sourceID); ok {
+		return m.startPingFromHost(host, destIP, requestID)
 	}
+	// Fall back to router — pick first up interface as source.
+	if router, ok := m.GetRouter(sourceID); ok {
+		return m.startPingFromRouter(router, destIP, requestID)
+	}
+	return fmt.Errorf("device %s not found", sourceID)
+}
 
+func (m *Manager) startPingFromHost(host *Host, destIP, requestID string) error {
 	simTime := m.SimNow()
-	sessionID := fmt.Sprintf("ping_%s_%d", sourceID, simTime)
+	sessionID := fmt.Sprintf("ping_%s_%d", host.ID, simTime)
 	icmpID := uint16(simTime/time.Millisecond) % 65535
 	seq := uint16(1)
 
@@ -591,7 +599,7 @@ func (m *Manager) StartPing(sourceID, destIP, requestID string) error {
 	}
 	m.pingSessions[sessionID] = &PingSession{
 		ID:        sessionID,
-		SourceID:  sourceID,
+		SourceID:  host.ID,
 		DestIP:    destIP,
 		ICMPID:    icmpID,
 		Sequence:  seq,
@@ -614,6 +622,72 @@ func (m *Manager) StartPing(sourceID, destIP, requestID string) error {
 	if m.scheduler != nil {
 		m.scheduler.Schedule(engine.EventTimerICMP, engine.IcmpPingTimeout, sessionID)
 	}
+	return nil
+}
+
+func (m *Manager) startPingFromRouter(router *Router, destIP, requestID string) error {
+	// Choose the best source interface: prefer the one whose subnet contains the dest,
+	// otherwise fall back to the first up interface.
+	router.mu.RLock()
+	srcIP := pdu.IPAddress("")
+	srcPort := ""
+	destIPAddr := pdu.IPAddress(destIP)
+	for portID, ip := range router.Interfaces {
+		if !router.isInterfaceUpLocked(portID) {
+			continue
+		}
+		if srcIP == "" {
+			srcIP = ip
+			srcPort = portID
+		}
+		// Prefer an interface on the same subnet as the destination.
+		if mask, ok := router.InterfaceMask[portID]; ok {
+			if ipOnSubnet(ip, mask, destIPAddr) {
+				srcIP = ip
+				srcPort = portID
+				break
+			}
+		}
+	}
+	router.mu.RUnlock()
+
+	if srcIP == "" {
+		return fmt.Errorf("router %s has no up interfaces", router.ID)
+	}
+
+	simTime := m.SimNow()
+	sessionID := fmt.Sprintf("ping_%s_%d", router.ID, simTime)
+	icmpID := uint16(simTime/time.Millisecond) % 65535
+	seq := uint16(1)
+
+	m.mu.Lock()
+	if m.pingSessions == nil {
+		m.pingSessions = make(map[string]*PingSession)
+	}
+	m.pingSessions[sessionID] = &PingSession{
+		ID:        sessionID,
+		SourceID:  router.ID,
+		DestIP:    destIP,
+		ICMPID:    icmpID,
+		Sequence:  seq,
+		SentAt:    simTime,
+		ReplyConn: ReplyTarget{RequestID: requestID},
+	}
+	m.mu.Unlock()
+
+	echo := pdu.NewEchoRequest(icmpID, seq, []byte("NetForge ping"))
+	ipPkt := &pdu.IPv4Packet{
+		Version: 4, TTL: 64, Protocol: pdu.ProtoICMP,
+		SourceIP:      srcIP,
+		DestinationIP: pdu.IPAddress(destIP),
+		ICMP:          echo,
+	}
+	m.forwardIPFromRouter(router, srcPort, ipPkt, simTime, 1.0)
+
+	if m.scheduler != nil {
+		m.scheduler.Schedule(engine.EventTimerICMP, engine.IcmpPingTimeout, sessionID)
+	}
+	_ = srcPort
 	return nil
 }
 
@@ -847,4 +921,13 @@ func (m *Manager) handleRouterFR(router *Router, portID string, wire *pdu.WireFr
 	}
 	wire.Physical = &pdu.L1Metadata{DestNodeID: targetNode, DestPortID: targetPort}
 	m.DeliverFrame(targetNode, targetPort, wire)
+}
+
+// ipOnSubnet returns true if destIP falls within the subnet defined by ifaceIP + mask.
+func ipOnSubnet(ifaceIP pdu.IPAddress, mask string, destIP pdu.IPAddress) bool {
+	_, ipNet, err := net.ParseCIDR(ipToCIDR(ifaceIP, mask))
+	if err != nil {
+		return false
+	}
+	return ipNet.Contains(net.ParseIP(string(destIP)))
 }

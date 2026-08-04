@@ -142,6 +142,11 @@ func (r *Router) SetInterfaceShutdown(portID string, shutdown bool) {
 func (r *Router) IsInterfaceUp(portID string) bool {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
+	return r.isInterfaceUpLocked(portID)
+}
+
+// isInterfaceUpLocked is the lock-free variant for internal callers that already hold r.mu.
+func (r *Router) isInterfaceUpLocked(portID string) bool {
 	if pol, ok := r.IfacePolicies[portID]; ok {
 		return pol.Up && !pol.Shutdown
 	}
@@ -557,8 +562,42 @@ func (r *Router) LearnCDPNeighbor(localPort string, pkt *pdu.CDPPacket) {
 	if r.CDPNeighbors == nil {
 		r.CDPNeighbors = make([]CDPNeighbor, 0)
 	}
+	// Update existing entry rather than appending duplicates.
+	for i := range r.CDPNeighbors {
+		if r.CDPNeighbors[i].DeviceID == pkt.DeviceID && r.CDPNeighbors[i].LocalPort == localPort {
+			r.CDPNeighbors[i].PortID = pkt.PortID
+			r.CDPNeighbors[i].Platform = pkt.Platform
+			r.CDPNeighbors[i].IPAddress = pkt.IPAddress
+			r.CDPNeighbors[i].LastSeen = cdpNow()
+			return
+		}
+	}
 	r.CDPNeighbors = append(r.CDPNeighbors, CDPNeighbor{
 		DeviceID: pkt.DeviceID, PortID: pkt.PortID, Platform: pkt.Platform,
-		IPAddress: pkt.IPAddress, LocalPort: localPort,
+		IPAddress: pkt.IPAddress, LocalPort: localPort, LastSeen: cdpNow(),
 	})
+}
+
+// cdpNow returns a monotonic counter suitable for CDP holdtime tracking.
+// Using a package-level counter avoids importing time into the router layer.
+var cdpCounter int64
+
+func cdpNow() int64 {
+	cdpCounter++
+	return cdpCounter
+}
+
+// PurgeStaleCDPNeighbors removes entries not seen within holdtime ticks.
+// Call after each CDP cycle to age out disconnected neighbors (holdtime=3 cycles).
+func (r *Router) PurgeStaleCDPNeighbors(holdtime int64) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	threshold := cdpCounter - holdtime
+	live := r.CDPNeighbors[:0]
+	for _, n := range r.CDPNeighbors {
+		if n.LastSeen > threshold {
+			live = append(live, n)
+		}
+	}
+	r.CDPNeighbors = live
 }

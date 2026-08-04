@@ -137,7 +137,7 @@ func (m *Manager) findRouterByIP(ip pdu.IPAddress) (string, bool) {
 	return "", false
 }
 
-// RunCDPCycle sends CDP advertisements on all router ports.
+// RunCDPCycle sends CDP advertisements on all router ports and ages out stale neighbors.
 func (m *Manager) RunCDPCycle() {
 	m.mu.RLock()
 	routers := make([]*Router, 0, len(m.Routers))
@@ -156,6 +156,8 @@ func (m *Manager) RunCDPCycle() {
 			_ = pdu.EncodeFramePayload(frame, &pdu.FramePayload{Type: pdu.PayloadCDP, CDP: cdp})
 			m.forwardFromDevice(router.ID, portID, &pdu.WireFrame{Frame: frame})
 		}
+		// Remove neighbors not refreshed within 3 CDP cycles (holdtime).
+		router.PurgeStaleCDPNeighbors(3)
 	}
 }
 

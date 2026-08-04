@@ -63,6 +63,7 @@ func NewManager() *Manager {
 		pcap:         NewPortCapture(500),
 		activity:     NewActivityEngine(),
 		configStore:  NewConfigStore(),
+		signaling:    NewSignalingEngine(),
 	}
 }
 
@@ -152,6 +153,9 @@ func (m *Manager) applyLinkState(link TopologyLink) {
 		if dstRouter.Rip != nil && dstRouter.Rip.Enabled && srcIP != "" {
 			dstRouter.Rip.AddNeighbor(link.TargetPortID, srcIP)
 		}
+
+		// Auto-complete IKE handshake if both ends already have matching crypto-maps + PSKs.
+		go m.TryAutoNegotiateIKE(link.SourceNodeID, link.TargetNodeID)
 	}
 
 	if host, ok := m.Hosts[link.SourceNodeID]; ok {

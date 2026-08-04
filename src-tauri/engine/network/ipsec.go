@@ -267,15 +267,63 @@ func (m *Manager) NegotiateIKE(localRouterID string, peerIP pdu.IPAddress, psk s
 	remoteKey := remote.getPSK(local.publicIP())
 	if psk != "" {
 		localKey = psk
+		remoteKey = remote.getPSK(peerIP)
+		if remoteKey == "" {
+			// allow caller-supplied PSK to override if remote has no explicit key
+			remoteKey = psk
+		}
 	}
 	if localKey == "" || remoteKey == "" || localKey != remoteKey {
-		return fmt.Errorf("IKE authentication failed: PSK mismatch")
+		return fmt.Errorf("IKE authentication failed: PSK mismatch (local=%q remote=%q)", localKey, remoteKey)
 	}
 	simTime := m.SimNow()
 	local.activatePeer(peerIP, simTime)
 	remote.activatePeer(local.publicIP(), simTime)
 	m.LogEvent(EventProtocol, localRouterID, "", fmt.Sprintf("IKE SA established with %s", peerIP), nil)
+	m.LogEvent(EventProtocol, remote.ID, "", fmt.Sprintf("IKE SA established with %s", local.publicIP()), nil)
 	return nil
+}
+
+// TryAutoNegotiateIKE is called when a link is added between two routers.
+// If both ends have matching crypto maps and PSKs configured, it auto-completes
+// the IKE handshake so the VPN tunnel is immediately operational.
+func (m *Manager) TryAutoNegotiateIKE(srcRouterID, dstRouterID string) {
+	src, srcOk := m.GetRouter(srcRouterID)
+	dst, dstOk := m.GetRouter(dstRouterID)
+	if !srcOk || !dstOk {
+		return
+	}
+
+	// Collect all peer IPs declared in src's crypto maps.
+	src.mu.RLock()
+	var peerIPs []pdu.IPAddress
+	for _, entries := range src.CryptoMaps {
+		for _, e := range entries {
+			if e.PeerIP != "" {
+				peerIPs = append(peerIPs, e.PeerIP)
+			}
+		}
+	}
+	src.mu.RUnlock()
+
+	dstPubIP := dst.publicIP()
+	for _, peerIP := range peerIPs {
+		if peerIP != dstPubIP {
+			continue
+		}
+		// Both sides must have matching PSKs already configured.
+		localKey := src.getPSK(peerIP)
+		remoteKey := dst.getPSK(src.publicIP())
+		if localKey == "" || remoteKey == "" || localKey != remoteKey {
+			continue
+		}
+		simTime := m.SimNow()
+		src.activatePeer(peerIP, simTime)
+		dst.activatePeer(src.publicIP(), simTime)
+		m.LogEvent(EventProtocol, srcRouterID, "", fmt.Sprintf("IKE auto-negotiated with %s", peerIP), nil)
+		m.InstallVPNRoutes(srcRouterID)
+		m.InstallVPNRoutes(dstRouterID)
+	}
 }
 
 func (m *Manager) findRouterByPeerIP(ip pdu.IPAddress) *Router {
