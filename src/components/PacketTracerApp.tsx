@@ -1,10 +1,11 @@
-import React, { useCallback, useRef, useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import { useTopologyStore, NodeType } from '../store/useTopologyStore';
 import { DevicePalette } from './DevicePalette';
 import { TopologyCanvas } from './TopologyCanvas';
 import { Terminal } from './Terminal';
 import { DeviceCategory, DeviceModel } from '../assets/deviceCatalog';
 import type { EngineEventHandler } from '../hooks/useWebSocket';
+import { useKeyboardShortcuts, useDeleteSelection } from '../hooks/useKeyboardShortcuts';
 
 interface PacketTracerAppProps {
   sendCommand: (type: string, payload: unknown) => void;
@@ -42,8 +43,20 @@ export const PacketTracerApp: React.FC<PacketTracerAppProps> = ({ sendCommand, o
   const {
     linkMode, setLinkMode, activeTool, setActiveTool,
     simMode, setSimMode, bottomTab, setBottomTab,
-    nodes,
+    nodes, setPendingPlacement,
   } = useTopologyStore();
+
+  // Keyboard: Delete/Backspace removes selected node or link.
+  const handleDelete = useDeleteSelection(sendCommand);
+
+  // Keyboard: Escape cancels link mode, pending placement, or resets to select tool.
+  const handleEscape = useCallback(() => {
+    setLinkMode(false);
+    setPendingPlacement(null);
+    setActiveTool('select');
+  }, [setLinkMode, setPendingPlacement, setActiveTool]);
+
+  useKeyboardShortcuts(handleDelete, handleEscape);
 
   const spawnDevice = useCallback((type: NodeType, label: string, x: number, y: number) => {
     const node = useTopologyStore.getState().addNode(type, label, x, y);

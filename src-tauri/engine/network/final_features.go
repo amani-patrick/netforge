@@ -43,8 +43,20 @@ func (m *Manager) GetASAFirewall(id string) (*ASAFirewall, bool) {
 }
 
 // ConfigureWANSerial sets encapsulation on a serial interface.
+// When both ends of an existing link are now configured as PPP, the handshake
+// is kicked off automatically so the link comes up without manual intervention.
 func (m *Manager) ConfigureWANSerial(routerID, portID, encap string, bandwidth int64) {
 	m.WAN.ConfigureSerial(routerID, portID, encap, bandwidth)
+	if encap == "ppp" {
+		// Check whether the peer port is also configured as PPP — if so, start LCP.
+		destNode, destPort, _, ok := m.ResolveLinkPeer(routerID, portID)
+		if ok {
+			peerSerial := m.WAN.GetSerial(destNode, destPort)
+			if peerSerial != nil && peerSerial.Encap == "ppp" && peerSerial.PPPState == PPPDead {
+				go m.InitiatePPPHandshake(routerID, portID)
+			}
+		}
+	}
 }
 
 // ConfigureFrameRelayMap registers a Frame Relay PVC.

@@ -60,7 +60,7 @@ func (r *Router) MatchIPv6Route(dest pdu.IPv6Address) (*IPv6RouteEntry, bool) {
 	bestLen := -1
 	for i := range r.IPv6Routes {
 		entry := &r.IPv6Routes[i]
-		if entry.Network.Contains(target) {
+		if entry.Network != nil && target != nil && entry.Network.Contains(target) {
 			ones, _ := entry.Network.Mask.Size()
 			if ones > bestLen {
 				bestLen = ones

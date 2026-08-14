@@ -101,12 +101,15 @@ func (e *ExecutorWithSession) Execute(deviceID, line string) Result {
 			return Result{Lines: []string{"Building configuration...", "[OK]"}, Success: true}
 		}
 	case "copy":
-		if len(parts) >= 4 && parts[1] == "running-config" && parts[2] == "startup-config" {
+		if len(parts) >= 3 && parts[1] == "running-config" && parts[2] == "startup-config" {
 			e.Mgr.WriteMemory(deviceID)
 			return Result{Lines: []string{"Destination filename [startup-config]", "Building configuration...", "[OK]"}, Success: true}
 		}
 	case "show":
 		if r, ok := e.execShowExtended(deviceID, parts); ok {
+			return r
+		}
+		if r, ok := e.execShowExtended2(deviceID, parts); ok {
 			return r
 		}
 		return e.execShow(deviceID, parts)

@@ -25,11 +25,15 @@ type TracerouteResult struct {
 	RequestID string          `json:"request_id,omitempty"`
 }
 
-// StartTraceroute runs TTL-incrementing probes from a host.
+// StartTraceroute runs TTL-incrementing probes from a host or router.
 func (m *Manager) StartTraceroute(sourceID, destIP, requestID string) ([]TracerouteHop, error) {
-	host, ok := m.GetHost(sourceID)
-	if !ok {
-		return nil, fmt.Errorf("host %s not found", sourceID)
+	var startRouter string
+	if host, ok := m.GetHost(sourceID); ok {
+		startRouter = host.UplinkNode
+	} else if r, ok := m.GetRouter(sourceID); ok {
+		startRouter = r.ID
+	} else {
+		return nil, fmt.Errorf("device %s not found", sourceID)
 	}
 
 	simTime := m.SimNow()
@@ -37,7 +41,7 @@ func (m *Manager) StartTraceroute(sourceID, destIP, requestID string) ([]Tracero
 	dest := pdu.IPAddress(destIP)
 
 	for ttl := 1; ttl <= 30; ttl++ {
-		replyFrom, rtt, reached := m.probeTTL(host, dest, ttl, simTime)
+		replyFrom, rtt, reached := m.probeTTL(startRouter, dest, ttl, simTime)
 		hop := TracerouteHop{Hop: ttl, RTT: rtt}
 		if replyFrom != "" {
 			hop.Address = string(replyFrom)
@@ -54,12 +58,8 @@ func (m *Manager) StartTraceroute(sourceID, destIP, requestID string) ([]Tracero
 	return hops, nil
 }
 
-func (m *Manager) probeTTL(host *Host, dest pdu.IPAddress, ttl int, simTime time.Duration) (pdu.IPAddress, float64, bool) {
-	routerID := host.UplinkNode
-
-	// Walk up to ttl routers
-	currentNode := routerID
-	currentIP := host.IP
+func (m *Manager) probeTTL(startRouter string, dest pdu.IPAddress, ttl int, simTime time.Duration) (pdu.IPAddress, float64, bool) {
+	currentNode := startRouter
 	for hop := 1; hop <= ttl; hop++ {
 		router, ok := m.GetRouter(currentNode)
 		if !ok {
@@ -77,20 +77,13 @@ func (m *Manager) probeTTL(host *Host, dest pdu.IPAddress, ttl int, simTime time
 			}
 			return ifaceIP, float64(hop) * 2.0, false
 		}
-		nh := route.NextHop
-		if nh == "" {
-			nh = dest
-		}
 		// find next router via topology
-		nextRouter, nextPort, found := m.FindNeighborOnPort(currentNode, route.Interface)
+		nextRouter, _, found := m.FindNeighborOnPort(currentNode, route.Interface)
 		if !found {
 			break
 		}
 		currentNode = nextRouter
-		currentIP = pdu.IPAddress(nh)
-		_ = nextPort
 	}
-	_ = currentIP
 	_ = engine.EventTimerICMP
 	return "", 0, false
 }

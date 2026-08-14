@@ -180,6 +180,11 @@ func (m *Manager) DeliverFrame(nodeID, portID string, wire *pdu.WireFrame) {
 	}
 	if phone, ok := m.GetVoIPPhone(nodeID); ok {
 		m.deliverToVoIPPhone(phone, portID, wire)
+		return
+	}
+	// Cellular gateway — check if the frame is destined for an attached UE (downlink).
+	if gw, ok := m.GetCellularGateway(nodeID); ok {
+		m.deliverToCellularGateway(gw, portID, wire)
 	}
 }
 
@@ -901,17 +906,73 @@ func (m *Manager) handleHostNDP(host *Host, portID string, ndp *pdu.NDPPacket, s
 func (m *Manager) handleRouterPPP(router *Router, portID string, ppp *pdu.PPPFrame, simTime time.Duration) {
 	reply := m.WAN.ProcessPPPFrame(router.ID, portID, ppp)
 	if reply != nil {
+		// Send the LCP/NCP reply back to the peer via the scheduler (not DeliverFrame directly)
+		// to avoid mutual recursion between the two PPP state machines.
 		frame := &pdu.EthernetFrame{SourceMAC: router.InterfaceMAC[portID]}
 		_ = pdu.EncodeFramePayload(frame, &pdu.FramePayload{Type: pdu.PayloadPPP, PPP: reply})
-		destNode, destPort, _, ok := m.ResolveLinkPeer(router.ID, portID)
-		if ok {
-			m.DeliverFrame(destNode, destPort, &pdu.WireFrame{Frame: frame})
+		destNode, destPort, meta, peerOk := m.ResolveLinkPeer(router.ID, portID)
+		if peerOk {
+			// Advance the peer's state machine directly (no wire delivery) to avoid recursion.
+			m.WAN.ProcessPPPFrame(destNode, destPort, reply)
+			// Schedule delivery to peer so the test/sim loop picks it up.
+			wire := &pdu.WireFrame{
+				Frame: frame,
+				Physical: &pdu.L1Metadata{
+					SourceNodeID: router.ID, SourcePortID: portID,
+					DestNodeID: destNode, DestPortID: destPort,
+				},
+			}
+			if meta != nil {
+				wire.Physical.Bandwidth = meta.Bandwidth
+				wire.Physical.CableLength = meta.CableLength
+			}
+			m.TransmitFrame(wire)
 		}
 	}
-	if ppp.Stage == "DATA" && len(ppp.Payload) > 0 {
-		router.AssignPPPSerialAddress(portID, len(m.Links), true)
+
+	// When the DATA stage arrives the link is fully up — assign addresses to both ends.
+	if ppp.Stage == "DATA" {
+		linkIndex := m.linkIndexForPort(router.ID, portID)
+		router.AssignPPPSerialAddress(portID, linkIndex, true)
+
+		destNode, destPort, _, ok := m.ResolveLinkPeer(router.ID, portID)
+		if ok {
+			if peerRouter, ok2 := m.GetRouter(destNode); ok2 {
+				peerRouter.AssignPPPSerialAddress(destPort, linkIndex, false)
+				// Install connected routes between the two ends.
+				m.LogEvent(EventProtocol, router.ID, portID, "PPP link up", map[string]interface{}{
+					"peer": destNode,
+				})
+			}
+		}
 	}
 	_ = simTime
+}
+
+// InitiatePPPHandshake kicks off the LCP→NCP→Up sequence for a serial link.
+// Call this after both ends have been configured with encapsulation ppp.
+func (m *Manager) InitiatePPPHandshake(routerID, portID string) {
+	router, ok := m.GetRouter(routerID)
+	if !ok {
+		return
+	}
+	lcpFrame := &pdu.PPPFrame{Stage: "LCP"}
+	ethFrame := &pdu.EthernetFrame{SourceMAC: router.InterfaceMAC[portID]}
+	_ = pdu.EncodeFramePayload(ethFrame, &pdu.FramePayload{Type: pdu.PayloadPPP, PPP: lcpFrame})
+	m.forwardFromDevice(router.ID, portID, m.wrapWireFrame(router.ID, portID, ethFrame))
+}
+
+// linkIndexForPort returns a stable index for a port's link, used for /30 address assignment.
+func (m *Manager) linkIndexForPort(nodeID, portID string) int {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for i, link := range m.Links {
+		if (link.SourceNodeID == nodeID && link.SourcePortID == portID) ||
+			(link.TargetNodeID == nodeID && link.TargetPortID == portID) {
+			return i + 1
+		}
+	}
+	return len(m.Links) + 1
 }
 
 func (m *Manager) handleRouterFR(router *Router, portID string, wire *pdu.WireFrame, fr *pdu.FrameRelayFrame) {
@@ -930,4 +991,55 @@ func ipOnSubnet(ifaceIP pdu.IPAddress, mask string, destIP pdu.IPAddress) bool {
 		return false
 	}
 	return ipNet.Contains(net.ParseIP(string(destIP)))
+}
+
+// deliverToCellularGateway handles frames arriving at a cellular gateway.
+// If the destination IP belongs to an attached UE, the packet is forwarded
+// down the radio path to that UE. Otherwise it is processed normally.
+func (m *Manager) deliverToCellularGateway(gw *CellularGateway, portID string, wire *pdu.WireFrame) {
+	payload, err := pdu.DecodeFramePayload(wire.Frame)
+	if err != nil || payload == nil || payload.IP == nil {
+		return
+	}
+	ip := payload.IP
+
+	gw.mu.RLock()
+	ueID, isUE := "", false
+	if gw.UETable != nil {
+		ueID, isUE = gw.UETable[ip.DestinationIP]
+	}
+	gw.mu.RUnlock()
+
+	if isUE {
+		// Downlink: deliver to the UE directly.
+		m.deliverToUE(ueID, wire)
+		return
+	}
+
+	// Not a UE destination — treat like a router for wired forwarding.
+	// The gateway acts as a NAT/router for UE traffic on its wired interfaces.
+	if ip.TTL <= 1 {
+		return
+	}
+	ip.TTL--
+	// Find a wired outbound interface.
+	gw.mu.RLock()
+	outPort, outMAC := "", pdu.MACAddress("")
+	for pid, mac := range gw.InterfaceMAC {
+		if pid != "Cellular0/0/0" {
+			outPort = pid
+			outMAC = mac
+			break
+		}
+	}
+	gw.mu.RUnlock()
+
+	if outPort == "" || outPort == portID {
+		return
+	}
+	frame, err := pdu.NewIPv4Frame(pdu.MACBroadcast, outMAC, ip)
+	if err != nil {
+		return
+	}
+	m.forwardFromDevice(gw.ID, outPort, m.wrapWireFrame(gw.ID, outPort, frame))
 }

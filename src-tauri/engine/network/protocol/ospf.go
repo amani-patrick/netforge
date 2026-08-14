@@ -327,10 +327,7 @@ func (o *OspfDaemon) ComputeSPF(lsdb map[string]RouterLsa, rootID string) map[st
 		}
 		visited[u] = true
 
-		lsa, exists := lsdb[u]
-		if !exists {
-			continue
-		}
+		lsa := lsdb[u]
 
 		for _, link := range lsa.Links {
 			if visited[link.ConnectedID] {

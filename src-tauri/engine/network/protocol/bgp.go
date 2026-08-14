@@ -71,10 +71,21 @@ func (b *BgpDaemon) ProcessUpdate(routes []BGPRoute, peer pdu.IPAddress) []BGPRo
 	}
 
 	for _, route := range routes {
-		if len(route.ASPath) > 0 && route.ASPath[len(route.ASPath)-1] == peerCfg.RemoteAS {
+		hasLoop := false
+		for _, as := range route.ASPath {
+			if as == b.LocalAS {
+				hasLoop = true
+				break
+			}
+		}
+		// Also drop routes where the sender's own AS is at the end (split-horizon)
+		if !hasLoop && len(route.ASPath) > 0 && route.ASPath[len(route.ASPath)-1] == peerCfg.RemoteAS {
+			hasLoop = true
+		}
+		if hasLoop {
 			continue
 		}
-		newPath := append(route.ASPath, peerCfg.RemoteAS)
+		newPath := append([]int{}, route.ASPath...)
 		existing, found := b.Routes[route.Prefix]
 		if !found || len(newPath) < len(existing.ASPath) {
 			r := BGPRoute{Prefix: route.Prefix, NextHop: peer, ASPath: newPath, Origin: "IGP"}
