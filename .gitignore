@@ -52,3 +52,8 @@ Thumbs.db
 # Tauri build artifacts
 src-tauri/target/
 src-tauri/binaries/
+
+#test files
+src-tauri/engine/**/*_test.go
+src-tauri/protocol/**/*_test.go
+src-tauri/pcap/**/*_test.go

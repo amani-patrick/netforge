@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 
-export type NodeType = 'ROUTER' | 'SWITCH' | 'PC' | 'SERVER' | 'ASA' | 'AP' | 'PHONE' | 'CLOUD';
+export type NodeType = 'ROUTER' | 'SWITCH' | 'PC' | 'SERVER' | 'ASA' | 'AP' | 'PHONE' | 'CLOUD' | 'CELLULAR_GW' | 'MOBILE_UE' | 'CALL_MANAGER';
 export type WorkspaceTool = 'select' | 'inspect' | 'delete' | 'note' | 'move';
 export type SimMode = 'realtime' | 'simulation';
 
@@ -43,6 +43,7 @@ interface TopologyState {
   simMode: SimMode;
   bottomTab: 'cli' | 'config' | 'desktop';
   statusMessage: string;
+  inspectPanelOpen: boolean;
 
   addNode: (type: NodeType, label: string, x: number, y: number) => NetworkNode;
   updateNodePosition: (id: string, x: number, y: number) => void;
@@ -57,6 +58,7 @@ interface TopologyState {
   setSimMode: (mode: SimMode) => void;
   setBottomTab: (tab: 'cli' | 'config' | 'desktop') => void;
   setStatusMessage: (msg: string) => void;
+  setInspectPanelOpen: (open: boolean) => void;
   removeNode: (id: string) => void;
   removeLink: (id: string) => void;
   clearTopology: () => void;
@@ -75,6 +77,7 @@ export const useTopologyStore = create<TopologyState>((set, get) => ({
   simMode: 'realtime',
   bottomTab: 'cli',
   statusMessage: 'Select tool active — click a device to select, drag to move. Press Del to delete.',
+  inspectPanelOpen: false,
 
   addNode: (type, label, x, y) => {
     const id = `${type.toLowerCase()}_${Math.random().toString(36).substr(2, 9)}`;
@@ -182,6 +185,7 @@ export const useTopologyStore = create<TopologyState>((set, get) => ({
   setSimMode: (mode) => set({ simMode: mode }),
   setBottomTab: (tab) => set({ bottomTab: tab }),
   setStatusMessage: (msg) => set({ statusMessage: msg }),
+  setInspectPanelOpen: (open) => set({ inspectPanelOpen: open }),
 
   removeNode: (id) =>
     set((state) => {

@@ -6,6 +6,7 @@ export type DeviceCategory =
   | 'wireless'
   | 'security'
   | 'wan'
+  | 'voip'
   | 'connections';
 
 export type DeviceModel =
@@ -18,7 +19,10 @@ export type DeviceModel =
   | 'PHONE'
   | 'CLOUD'
   | 'COPPER'
-  | 'FIBER';
+  | 'FIBER'
+  | 'CELLULAR_GW'
+  | 'MOBILE_UE'
+  | 'CALL_MANAGER';
 
 export interface DeviceCatalogItem {
   model: DeviceModel;
@@ -34,7 +38,8 @@ export const DEVICE_CATEGORIES: { id: DeviceCategory; label: string }[] = [
   { id: 'servers', label: 'Servers' },
   { id: 'wireless', label: 'Wireless' },
   { id: 'security', label: 'Security' },
-  { id: 'wan', label: 'WAN Emulation' },
+  { id: 'wan', label: 'WAN / 5G' },
+  { id: 'voip', label: 'VoIP' },
   { id: 'connections', label: 'Connections' },
 ];
 
@@ -63,6 +68,12 @@ export const DEVICE_CATALOG: Record<DeviceCategory, DeviceCatalogItem[]> = {
   wan: [
     { model: 'CLOUD', label: 'Cloud', icon: '/icons/cloud.svg', description: 'Internet / cloud' },
     { model: 'ROUTER', label: 'VPN Peer', icon: '/icons/router.svg', description: 'Site-to-site VPN' },
+    { model: 'CELLULAR_GW', label: '4G/LTE GW', icon: '/icons/cellular.svg', description: 'LTE/5G cellular gateway' },
+    { model: 'MOBILE_UE', label: 'Mobile UE', icon: '/icons/mobile.svg', description: '4G/5G handset / UE' },
+  ],
+  voip: [
+    { model: 'PHONE', label: 'IP Phone', icon: '/icons/phone.svg', description: 'SIP/SCCP VoIP phone' },
+    { model: 'CALL_MANAGER', label: 'Call Manager', icon: '/icons/cucm.svg', description: 'Cisco CUCM / Call Manager' },
   ],
   connections: [
     { model: 'COPPER', label: 'Copper Straight', icon: '/icons/copper.svg', description: 'Copper cable' },
@@ -82,6 +93,10 @@ export function iconForModel(model: DeviceModel): string {
     CLOUD: '/icons/cloud.svg',
     COPPER: '/icons/copper.svg',
     FIBER: '/icons/fiber.svg',
+    CELLULAR_GW: '/icons/cellular.svg',
+    MOBILE_UE: '/icons/mobile.svg',
+    CALL_MANAGER: '/icons/cucm.svg',
   };
   return map[model];
 }
+

@@ -26,6 +26,15 @@ export const CloudIcon: React.FC<IconProps> = ({ size = 48, className }) => (
 export const PhoneIcon: React.FC<IconProps> = ({ size = 48, className }) => (
   <img src="/icons/phone.svg" width={size} height={size} alt="Phone" className={className} draggable={false} />
 );
+export const CellularGwIcon: React.FC<IconProps> = ({ size = 48, className }) => (
+  <img src="/icons/cellular.svg" width={size} height={size} alt="Cellular GW" className={className} draggable={false} />
+);
+export const MobileUEIcon: React.FC<IconProps> = ({ size = 48, className }) => (
+  <img src="/icons/mobile.svg" width={size} height={size} alt="Mobile UE" className={className} draggable={false} />
+);
+export const CallManagerIcon: React.FC<IconProps> = ({ size = 48, className }) => (
+  <img src="/icons/cucm.svg" width={size} height={size} alt="Call Manager" className={className} draggable={false} />
+);
 
 import type { DeviceModel } from './deviceCatalog';
 
@@ -39,6 +48,9 @@ export function DeviceIcon({ model, size = 48 }: { model: DeviceModel; size?: nu
     case 'AP': return <ApIcon size={size} />;
     case 'CLOUD': return <CloudIcon size={size} />;
     case 'PHONE': return <PhoneIcon size={size} />;
+    case 'CELLULAR_GW': return <CellularGwIcon size={size} />;
+    case 'MOBILE_UE': return <MobileUEIcon size={size} />;
+    case 'CALL_MANAGER': return <CallManagerIcon size={size} />;
     default: return <RouterIcon size={size} />;
   }
 }
